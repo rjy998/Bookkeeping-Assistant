@@ -1,0 +1,57 @@
+[package]
+name = "ai-ledger"
+# 版本号的唯一来源是 package.json —— tauri.conf.json 的 version 直接指向它，
+# 这里只是 Rust crate 自身的版本（不进 APK 的 versionName），跟着改只是为了别让人误以为有两套。
+version = "0.1.9"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "ai_ledger_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# 用于发起 HTTP 请求调用大模型 API（json 即可，无需 multipart；语音转写已下线）
+#
+# TLS 后端：用 `rustls-tls`（不用 native-roots）。
+#
+# 更新源的证书链已经改为**自签**（见 src/certs/apk-ca.crt 与 update.rs 的
+# TRUSTED_CA_PEM），客户端在代码里显式 `tls_built_in_root_certs(false)` +
+# `add_root_certificate(...)`，所以**用哪套内置根都无所谓** —— 反正会被关掉。
+#
+# 之前踩过的坑记录在这里，免得有人又想改：
+# - 默认 `rustls-tls` 走 `webpki-roots`（编译期静态列表），不跟随系统更新；
+# - 换 `rustls-tls-native-roots` 走系统 CA 库，但各家系统库收录新根 CA
+#   （Let's Encrypt 2025 起的 `Root YR`）的进度极不一致 —— Ubuntu 22.04 就没有，
+#   部分 Android 机型也没有，于是「电脑能开、手机 App 连不上」。
+# 最终解法是绕开公共 CA 体系改用自签 + 内置信任锚，见 update.rs 注释。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# 异步运行时
+tokio = { version = "1.0", features = ["macros", "rt"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# 软件更新要用系统浏览器打开 APK 下载地址。
+# 必须用这个插件而不是自己 spawn 进程：Android 沙箱里没有可执行的浏览器进程，
+# 只能通过系统 Intent 打开 URL，opener 正是这么做的（官方维护）。
+# 注意不要用 shell 插件的 open：它在 Android 上会报 Scoped shell IO error。
+tauri-plugin-opener = "2"
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"   # 体积优先：安装包从 30MB 降到个位数
+panic = "abort"
+strip = true
